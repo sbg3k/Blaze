@@ -103,5 +103,16 @@ class AuthHttpApi {
       auth: false,
     );
   }
+
+  Future<void> logout() async {
+    final refresh = client.session.refreshToken;
+    if (refresh != null && refresh.isNotEmpty) {
+      await client.postJson(
+        '/auth/logout',
+        body: <String, dynamic>{'refresh_token': refresh},
+      );
+    }
+    client.session.clear();
+  }
 }
 

@@ -1,6 +1,9 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/api/api_repositories.dart';
 import '../../../core/theme/theme.dart';
 
 // --- Entry Point --------------------------------------------------------------
@@ -58,7 +61,6 @@ class _DepositScreenState extends State<DepositScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final topPad = MediaQuery.of(context).padding.top;
 
     return Scaffold(
       appBar: AppBar(
@@ -74,7 +76,7 @@ class _DepositScreenState extends State<DepositScreen> {
       body: SafeArea(
         child: Column(
           children: [
-           
+
 
             Expanded(
               child: SingleChildScrollView(
@@ -376,9 +378,16 @@ class _DailyLimitBanner extends StatelessWidget {
 
 // --- Deposit Method Screen ----------------------------------------------------
 
-class DepositMethodScreen extends StatelessWidget {
+class DepositMethodScreen extends StatefulWidget {
   const DepositMethodScreen({super.key, required this.amount});
   final double amount;
+
+  @override
+  State<DepositMethodScreen> createState() => _DepositMethodScreenState();
+}
+
+class _DepositMethodScreenState extends State<DepositMethodScreen> {
+  bool _busy = false;
 
   static const _methods = [
     _DepositMethod(
@@ -398,6 +407,37 @@ class DepositMethodScreen extends StatelessWidget {
     ),
   ];
 
+  Future<void> _fund(_DepositMethod method) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final ref =
+        'AJO-${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(900000) + 100000}';
+    try {
+      final tx = await profileHttpApi.fundWallet(
+        amount: widget.amount,
+        reference: ref,
+        description: 'Deposit via ${method.title}',
+      );
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => DepositSuccessScreen(
+            amount: tx.amount,
+            method: method.title,
+            reference: tx.reference,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -409,7 +449,7 @@ class DepositMethodScreen extends StatelessWidget {
         elevation: 0,
         leading: IconButton(
           icon: Icon(Icons.arrow_back_rounded, color: cs.onSurface),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
         ),
         title: Text('Deposit Funds', style: AppTypography.titleMd(cs.onSurface)),
         actions: [
@@ -419,42 +459,47 @@ class DepositMethodScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('STEP 1 OF 2',
-                style: AppTypography.labelSm(cs.onSurfaceVariant)),
-            const SizedBox(height: 6),
-            Text('Choose Method',
-                style: AppTypography.displaySm(cs.onSurface)),
-            const SizedBox(height: 8),
-            Text(
-              'Select how you would like to fund your collective savings pool today.',
-              style: AppTypography.bodySm(cs.onSurfaceVariant),
+      body: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('STEP 1 OF 2',
+                    style: AppTypography.labelSm(cs.onSurfaceVariant)),
+                const SizedBox(height: 6),
+                Text('Choose Method',
+                    style: AppTypography.displaySm(cs.onSurface)),
+                const SizedBox(height: 8),
+                Text(
+                  'Select a channel to confirm. Your wallet is credited immediately for demo funding.',
+                  style: AppTypography.bodySm(cs.onSurfaceVariant),
+                ),
+                const SizedBox(height: 28),
+                ..._methods.map((m) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _MethodCard(
+                        method: m,
+                        enabled: !_busy,
+                        onTap: () => _fund(m),
+                      ),
+                    )),
+                const Spacer(),
+                _SecureTransactionBanner(),
+              ],
             ),
-            const SizedBox(height: 28),
-            ..._methods.map((m) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _MethodCard(
-                    method: m,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => DepositSuccessScreen(
-                            amount: amount,
-                            method: m.title,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                )),
-            const Spacer(),
-            _SecureTransactionBanner(),
-          ],
-        ),
+          ),
+          if (_busy)
+            const Positioned.fill(
+              child: AbsorbPointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(color: Color(0x33000000)),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -472,17 +517,24 @@ class _DepositMethod {
 }
 
 class _MethodCard extends StatelessWidget {
-  const _MethodCard({required this.method, required this.onTap});
+  const _MethodCard({
+    required this.method,
+    required this.onTap,
+    this.enabled = true,
+  });
   final _DepositMethod method;
   final VoidCallback onTap;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
     return GestureDetector(
-      onTap: onTap,
-      child: Container(
+      onTap: enabled ? onTap : null,
+      child: Opacity(
+        opacity: enabled ? 1 : 0.5,
+        child: Container(
         decoration: BoxDecoration(
           color: cs.surfaceContainerLow,
           borderRadius: BorderRadius.circular(16),
@@ -517,6 +569,7 @@ class _MethodCard extends StatelessWidget {
                 color: cs.onSurfaceVariant, size: 20),
           ],
         ),
+      ),
       ),
     );
   }
@@ -566,10 +619,12 @@ class DepositSuccessScreen extends StatelessWidget {
     super.key,
     required this.amount,
     required this.method,
+    required this.reference,
   });
 
   final double amount;
   final String method;
+  final String reference;
 
   String get _formattedAmount {
     final fixed = amount.toStringAsFixed(2);
@@ -584,7 +639,6 @@ class DepositSuccessScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    const refId = 'AJO-DP-992104X';
 
     return Scaffold(
       backgroundColor: cs.surfaceContainer,
@@ -700,14 +754,14 @@ class DepositSuccessScreen extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      'Ref: $refId',
+                      'Ref: $reference',
                       style: AppTypography.bodySm(cs.onSurfaceVariant),
                     ),
                   ),
                   GestureDetector(
                     onTap: () {
                       Clipboard.setData(
-                          const ClipboardData(text: refId));
+                          ClipboardData(text: reference));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Reference copied'),

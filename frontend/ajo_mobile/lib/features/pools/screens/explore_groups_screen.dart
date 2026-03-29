@@ -5,6 +5,7 @@ import '../../../core/api/api_repositories.dart';
 import '../../../core/network/api_client.dart';
 import '../models/group_model.dart';
 import '../data/groups_http_api.dart';
+import '../joined_group_entry.dart';
 import 'create_group_screen.dart';
 import 'group_detail_screen.dart';
 import '../../profile/screens/notifications_screen.dart';
@@ -24,6 +25,8 @@ class _ExploreGroupsScreenState extends State<ExploreGroupsScreen> {
   bool _loading = true;
   String? _error;
   List<GroupData> _groups = const [];
+  List<GroupInvite> _invites = const [];
+  List<MyMembership> _myGroups = const [];
 
   static const _queryByFilter = <int, String>{
     0: 'a', // All
@@ -48,13 +51,30 @@ class _ExploreGroupsScreenState extends State<ExploreGroupsScreen> {
     try {
       final q = _queryByFilter[_filterIndex] ?? 'a';
       final summaries = await groupsHttpApi.searchGroups(q: q);
+
+      // Keep discovery resilient: secondary calls should not blank the whole screen.
+      List<GroupInvite> invites = const [];
+      List<MyMembership> myGroups = const [];
+      try {
+        invites = await groupsHttpApi.myInvites();
+      } catch (_) {}
+      try {
+        myGroups = await groupsHttpApi.myGroups();
+      } catch (_) {}
+
       if (!mounted) return;
-      setState(() => _groups = summaries.map(_mapSummaryToUi).toList());
+      setState(() {
+        _groups = summaries.map(_mapSummaryToUi).toList();
+        _invites = invites;
+        _myGroups = myGroups;
+      });
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
         _error = e.message;
         _groups = const [];
+        _invites = const [];
+        _myGroups = const [];
       });
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -112,9 +132,13 @@ class _ExploreGroupsScreenState extends State<ExploreGroupsScreen> {
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
 
       body: SafeArea(
-        child: CustomScrollView(
-          slivers: [
-            // -- App bar -------------------------------------------------
+        child: RefreshIndicator(
+          color: cs.primary,
+          onRefresh: _fetchGroups,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+            // ── App bar ─────────────────────────────────────────────────
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
@@ -151,7 +175,7 @@ class _ExploreGroupsScreenState extends State<ExploreGroupsScreen> {
               ),
             ),
 
-            // -- Search bar ----------------------------------------------
+            // ── Search bar ──────────────────────────────────────────────
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
@@ -177,7 +201,7 @@ class _ExploreGroupsScreenState extends State<ExploreGroupsScreen> {
               ),
             ),
 
-            // -- Filter chips --------------------------------------------
+            // ── Filter chips ────────────────────────────────────────────
             SliverToBoxAdapter(
               child: SizedBox(
                 height: 52,
@@ -216,7 +240,56 @@ class _ExploreGroupsScreenState extends State<ExploreGroupsScreen> {
               ),
             ),
 
-            // -- Group cards ---------------------------------------------
+            // ── Group cards ─────────────────────────────────────────────
+            if (_invites.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                  child: _InviteCard(
+                    invite: _invites.first,
+                    onAccept: () async {
+                      await groupsHttpApi.acceptInvite(_invites.first.id);
+                      await _fetchGroups();
+                    },
+                    onDecline: () async {
+                      await groupsHttpApi.declineInvite(_invites.first.id);
+                      await _fetchGroups();
+                    },
+                  ),
+                ),
+              ),
+            if (_myGroups.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'My Groups',
+                        style: AppTypography.titleMd(cs.onSurface),
+                      ),
+                      const SizedBox(height: 8),
+                      ..._myGroups.take(3).map(
+                            (g) => ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(g.name),
+                              subtitle: Text(g.role.toUpperCase()),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () => openJoinedGroupDetail(
+                                context,
+                                groupId: g.groupId,
+                                groupName: g.name,
+                                role: g.role,
+                                groupType: g.type,
+                              ),
+                            ),
+                          ),
+                    ],
+                  ),
+                ),
+              ),
             if (_loading)
               const SliverToBoxAdapter(
                 child: Padding(
@@ -264,6 +337,16 @@ class _ExploreGroupsScreenState extends State<ExploreGroupsScreen> {
                         onInterested: () async {
                           final id = _groups[i].id;
                           if (id == null || id.isEmpty) return;
+                          final isMine = _myGroups.any((g) => g.groupId == id);
+                          if (isMine) {
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('You cannot join a group you created.'),
+                              ),
+                            );
+                            return;
+                          }
                           try {
                             await groupsHttpApi.requestJoinGroup(groupId: id);
                             if (!context.mounted) return;
@@ -283,14 +366,53 @@ class _ExploreGroupsScreenState extends State<ExploreGroupsScreen> {
                   ),
                 ),
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-// --- Group card (public — reused in home screen "See All") --------------------
+class _InviteCard extends StatelessWidget {
+  const _InviteCard({
+    required this.invite,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  final GroupInvite invite;
+  final Future<void> Function() onAccept;
+  final Future<void> Function() onDecline;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Invite: ${invite.groupName}', style: AppTypography.titleSm(cs.onSurface)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              TextButton(onPressed: onDecline, child: const Text('Decline')),
+              const SizedBox(width: 8),
+              ElevatedButton(onPressed: onAccept, child: const Text('Accept')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Group card (public — reused in home screen "See All") ────────────────────
 
 class GroupCard extends StatelessWidget {
   const GroupCard({

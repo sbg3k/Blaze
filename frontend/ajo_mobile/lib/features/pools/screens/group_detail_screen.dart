@@ -45,8 +45,10 @@ class GroupDetailScreen extends StatelessWidget {
                     onPressed: () {},
                   ),
                 ],
-                title: Text(group.name,
-                    style: AppTypography.titleMd(cs.onSurface)),
+                title: Text(
+                  'Group Details',
+                  style: AppTypography.titleMd(cs.primary),
+                ),
               ),
 
               SliverToBoxAdapter(

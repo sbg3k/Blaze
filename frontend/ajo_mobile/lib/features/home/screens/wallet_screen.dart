@@ -3,16 +3,71 @@ import 'dart:ui';
 import 'package:ajo_mobile/features/profile/screens/notifications_screen.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/api/api_repositories.dart';
 import '../../../core/theme/theme.dart';
-import '../models/mock_user_profile.dart';
+import '../models/user_profile.dart';
 import 'deposit_screen.dart';
 import 'referral_screen.dart';
 import 'transactions_screen.dart';
 import 'transfer_screen.dart';
 import 'withdraw_screen.dart';
 
-class WalletScreen extends StatelessWidget {
+class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key});
+
+  @override
+  State<WalletScreen> createState() => _WalletScreenState();
+}
+
+class _WalletScreenState extends State<WalletScreen> {
+  UserProfile? _profile;
+  WalletInfo? _liveWallet;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
+    try {
+      final profile = await profileHttpApi.getMe();
+      WalletInfo? live;
+      if (profile.wallet != null) {
+        try {
+          live = await profileHttpApi.getWallet();
+        } catch (_) {
+          live = profile.wallet;
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _profile = profile;
+        _liveWallet = live;
+        _error = null;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _provisionWallet() async {
+    try {
+      await profileHttpApi.provisionWallet();
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +117,14 @@ class WalletScreen extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                _BalanceCard(),
+                _BalanceCard(
+                  profile: _profile,
+                  liveWallet: _liveWallet,
+                  loading: _loading,
+                  error: _error,
+                  onProvisionWallet: _provisionWallet,
+                  onRefresh: _load,
+                ),
                 const SizedBox(height: 16),
                 _StatsRow(),
                 const SizedBox(height: 28),
@@ -78,7 +140,7 @@ class WalletScreen extends StatelessWidget {
   }
 }
 
-// --- App Bar ------------------------------------------------------------------
+// ─── App Bar ──────────────────────────────────────────────────────────────────
 
 class _WalletAppBar extends StatelessWidget {
   @override
@@ -133,23 +195,32 @@ class _WalletAppBar extends StatelessWidget {
   }
 }
 
-// --- Balance Card -------------------------------------------------------------
+// ─── Balance Card ─────────────────────────────────────────────────────────────
 
 class _BalanceCard extends StatelessWidget {
+  const _BalanceCard({
+    required this.profile,
+    required this.liveWallet,
+    required this.loading,
+    required this.error,
+    required this.onProvisionWallet,
+    required this.onRefresh,
+  });
+
+  final UserProfile? profile;
+  final WalletInfo? liveWallet;
+  final bool loading;
+  final String? error;
+  final Future<void> Function() onProvisionWallet;
+  final Future<void> Function() onRefresh;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final ext = context.ajoTheme;
-
-    final fixed = mockUserProfile.walletBalance.toStringAsFixed(2);
-    final parts = fixed.split('.');
-    final intPart = parts.first;
-    final decPart = parts.length > 1 ? parts.last : '00';
-    final intFormatted = intPart.replaceAllMapped(
-      RegExp(r'\\B(?=(\\d{3})+(?!\\d))'),
-      (m) => ',',
-    );
-
+    final wallet = liveWallet ?? profile?.wallet;
+    final hasWallet = wallet != null;
+    final canDeposit = wallet != null && wallet.status == 'active';
     const cardBg1 = Color(0xFF0A1F14);
     const cardBg2 = Color(0xFF1A2E1E);
 
@@ -168,7 +239,9 @@ class _BalanceCard extends StatelessWidget {
         ),
       ),
       padding: const EdgeInsets.all(24),
-      child: Column(
+      child: loading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
@@ -179,8 +252,15 @@ class _BalanceCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            '₦$intFormatted.$decPart',
+            wallet != null ? wallet.formattedBalance : 'Wallet Not Provisioned',
             style: AppTypography.displayMd(Colors.white),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            wallet != null
+                ? '${wallet.bankName ?? 'Bank'} • ${wallet.accountNumber ?? '--'}'
+                : (error ?? 'Complete KYC to provision wallet.'),
+            style: AppTypography.bodySm(Colors.white70),
           ),
           const SizedBox(height: 24),
           Row(
@@ -188,13 +268,25 @@ class _BalanceCard extends StatelessWidget {
               Expanded(
                 child: _CardButton(
                   icon: Icons.add_circle_outline_rounded,
-                  label: 'Deposit',
+                  label: canDeposit
+                      ? 'Deposit'
+                      : hasWallet
+                          ? 'Wallet ${wallet.status}'
+                          : 'Provision',
                   isPrimary: true,
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const DepositScreen(),
-                    ),
-                  ),
+                  onTap: canDeposit
+                      ? () {
+                          Navigator.of(context)
+                              .push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const DepositScreen(),
+                            ),
+                          )
+                              .then((_) => onRefresh());
+                        }
+                      : hasWallet
+                          ? null
+                          : () => onProvisionWallet(),
                 ),
               ),
               const SizedBox(width: 12),
@@ -231,42 +323,46 @@ class _CardButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.isPrimary,
-    required this.onTap,
+    this.onTap,
   });
 
   final IconData icon;
   final String label;
   final bool isPrimary;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final enabled = onTap != null;
 
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        height: 48,
-        decoration: BoxDecoration(
-          color: isPrimary ? cs.primary : const Color(0xFF2A3A2E),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              color: isPrimary ? cs.onPrimary : Colors.white,
-              size: 18,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: AppTypography.labelMd(
-                isPrimary ? cs.onPrimary : Colors.white,
+      child: Opacity(
+        opacity: enabled ? 1 : 0.45,
+        child: Container(
+          height: 48,
+          decoration: BoxDecoration(
+            color: isPrimary ? cs.primary : const Color(0xFF2A3A2E),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                color: isPrimary ? cs.onPrimary : Colors.white,
+                size: 18,
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: AppTypography.labelMd(
+                  isPrimary ? cs.onPrimary : Colors.white,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -315,7 +411,7 @@ class _TransferButton extends StatelessWidget {
   }
 }
 
-// --- Stats Row ----------------------------------------------------------------
+// ─── Stats Row ────────────────────────────────────────────────────────────────
 
 class _StatsRow extends StatelessWidget {
   @override
@@ -395,7 +491,7 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-// --- Recent Transactions ------------------------------------------------------
+// ─── Recent Transactions ──────────────────────────────────────────────────────
 
 class _RecentTransactions extends StatelessWidget {
   final _transactions = const [
@@ -537,7 +633,7 @@ class _TransactionItem extends StatelessWidget {
   }
 }
 
-// --- Referral Banner ----------------------------------------------------------
+// ─── Referral Banner ──────────────────────────────────────────────────────────
 
 class _ReferralBanner extends StatelessWidget {
   @override

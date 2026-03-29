@@ -7,7 +7,18 @@ import '../widgets/pool_form_widgets.dart';
 import 'review_group_screen.dart';
 
 class GroupRequirementsScreen extends StatefulWidget {
-  const GroupRequirementsScreen({super.key});
+  const GroupRequirementsScreen({
+    super.key,
+    required this.groupName,
+    required this.monthlyCon,
+    required this.type,
+    required this.interval,
+  });
+
+  final String groupName;
+  final int monthlyCon;
+  final String type;
+  final String interval;
 
   @override
   State<GroupRequirementsScreen> createState() =>
@@ -36,7 +47,7 @@ class _GroupRequirementsScreenState extends State<GroupRequirementsScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // -- App bar -------------------------------------------------
+            // ── App bar ─────────────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
@@ -71,7 +82,7 @@ class _GroupRequirementsScreenState extends State<GroupRequirementsScreen> {
               ),
             ),
 
-            // -- Step dots ---------------------------------------------
+            // ── Step dots ─────────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Row(
@@ -94,7 +105,7 @@ class _GroupRequirementsScreenState extends State<GroupRequirementsScreen> {
               ),
             ),
 
-            // -- Form -------------------------------------------------
+            // ── Form ─────────────────────────────────────────────────
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
@@ -147,7 +158,15 @@ class _GroupRequirementsScreenState extends State<GroupRequirementsScreen> {
                       onPressed: () => Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) => ReviewGroupScreen(
+                            groupName: widget.groupName,
+                            monthlyCon: widget.monthlyCon,
+                            type: widget.type,
+                            interval: widget.interval,
                             trustScore: _trustScore.toInt(),
+                            minIncome: int.tryParse(
+                                  _incomeCtrl.text.replaceAll(RegExp(r'[^0-9]'), ''),
+                                ) ??
+                                0,
                             description: _descCtrl.text,
                           ),
                         ),
@@ -164,7 +183,7 @@ class _GroupRequirementsScreenState extends State<GroupRequirementsScreen> {
   }
 }
 
-// --- Trust score card ---------------------------------------------------------
+// ─── Trust score card ─────────────────────────────────────────────────────────
 
 class _TrustScoreCard extends StatelessWidget {
   const _TrustScoreCard({required this.value, required this.onChanged});
@@ -238,7 +257,7 @@ class _TrustScoreCard extends StatelessWidget {
   }
 }
 
-// --- Money prefix field -------------------------------------------------------
+// ─── Money prefix field ───────────────────────────────────────────────────────
 
 class _MoneyField extends StatelessWidget {
   const _MoneyField({required this.controller, required this.prefix});
@@ -286,7 +305,7 @@ class _MoneyField extends StatelessWidget {
   }
 }
 
-// --- Textarea -----------------------------------------------------------------
+// ─── Textarea ─────────────────────────────────────────────────────────────────
 
 class _TextAreaField extends StatelessWidget {
   const _TextAreaField({required this.controller, required this.hint});

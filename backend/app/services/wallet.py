@@ -75,7 +75,10 @@ def provision_user_wallet(
     db.refresh(wallet)
 
     try:
-        virtual_account = create_virtual_account(account_name)
+        virtual_account = create_virtual_account(
+            account_name,
+            fallback_seed=f"user:{user.id}",
+        )
     except InterswitchError as exc:
         wallet.status = "failed"
         wallet.failure_reason = str(exc)
@@ -145,7 +148,10 @@ def provision_group_wallet(
     db.refresh(wallet)
 
     try:
-        virtual_account = create_virtual_account(account_name)
+        virtual_account = create_virtual_account(
+            account_name,
+            fallback_seed=f"group:{group.id}",
+        )
     except InterswitchError as exc:
         wallet.status = "failed"
         wallet.failure_reason = str(exc)
@@ -178,7 +184,7 @@ def fund_wallet(
 ) -> Transaction:
     if not wallet.is_active:
         raise ValueError("Cannot fund an inactive wallet.")
-    
+
     if db.query(Transaction).filter(Transaction.reference == reference).first():
         raise ValueError(f"Transaction with reference '{reference}' already exists.")
 

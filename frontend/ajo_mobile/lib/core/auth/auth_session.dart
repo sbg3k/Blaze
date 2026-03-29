@@ -25,4 +25,3 @@ class AuthSession {
     refreshToken = null;
   }
 }
-

@@ -18,6 +18,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final _amountCtrl = TextEditingController(text: '0.00');
   String _interval = 'Weekly';
   bool _isPublic = true;
+  bool _submitting = false;
 
   static const _intervals = ['Daily', 'Weekly', 'Bi-weekly', 'Monthly'];
 
@@ -38,7 +39,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // -- App bar -------------------------------------------------
+            // ── App bar ─────────────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
@@ -59,7 +60,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
               ),
             ),
 
-            // -- Form ----------------------------------------------------
+            // ── Form ────────────────────────────────────────────────────
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
@@ -102,11 +103,25 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                     AjoGradientButton(
                       label: 'Next',
                       suffixIcon: Icons.chevron_right_rounded,
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const GroupRequirementsScreen(),
-                        ),
-                      ),
+                      isLoading: _submitting,
+                      onPressed: _submitting
+                          ? null
+                          : () {
+                              final amount = int.tryParse(
+                                    _amountCtrl.text.replaceAll(RegExp(r'[^0-9]'), ''),
+                                  ) ??
+                                  0;
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => GroupRequirementsScreen(
+                                    groupName: _nameCtrl.text.trim(),
+                                    monthlyCon: amount,
+                                    type: _isPublic ? 'public' : 'private',
+                                    interval: _interval,
+                                  ),
+                                ),
+                              );
+                            },
                     ),
                   ],
                 ),
@@ -119,7 +134,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   }
 }
 
-// --- Amount field with ₦ prefix -----------------------------------------------
+// ─── Amount field with ₦ prefix ───────────────────────────────────────────────
 
 class _AmountField extends StatelessWidget {
   const _AmountField({required this.controller});
@@ -172,7 +187,7 @@ class _AmountField extends StatelessWidget {
   }
 }
 
-// --- Dropdown field -----------------------------------------------------------
+// ─── Dropdown field ───────────────────────────────────────────────────────────
 
 class _DropdownField extends StatelessWidget {
   const _DropdownField({
@@ -214,7 +229,7 @@ class _DropdownField extends StatelessWidget {
   }
 }
 
-// --- Toggle card --------------------------------------------------------------
+// ─── Toggle card ──────────────────────────────────────────────────────────────
 
 class _ToggleCard extends StatelessWidget {
   const _ToggleCard({

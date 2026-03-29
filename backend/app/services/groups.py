@@ -19,14 +19,13 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.services.wallet import provision_group_wallet
 from app.models.bank_statement import BankStatement
 from app.models.group import Group, GroupRequest, UserGroup
 from app.models.kyc import KYC
 from app.models.user import User
 
 
-# -- Private helpers -----------------------------------------------------------
+# ── Private helpers ───────────────────────────────────────────────────────────
 
 def _get_group_or_404(group_id: str, db: Session) -> Group:
     group = db.query(Group).filter(
@@ -127,7 +126,7 @@ def _add_member(user_id: str, group_id: str, db: Session) -> None:
     ))
 
 
-# -- Group CRUD ----------------------------------------------------------------
+# ── Group CRUD ────────────────────────────────────────────────────────────────
 
 def create_group(
     name:        str,
@@ -150,33 +149,33 @@ def create_group(
         created_at  = datetime.now(timezone.utc),
     )
     db.add(group)
-    db.flush()
+    db.flush()  # get group.id before adding membership
 
+    # Owner is automatically an admin member
     db.add(UserGroup(
-        user_id     = owner.id,
-        group_id    = group.id,
-        role        = "admin",
-        joined_at   = datetime.now(timezone.utc),
+        user_id   = owner.id,
+        group_id  = group.id,
+        role      = "admin",
+        joined_at = datetime.now(timezone.utc),
     ))
     db.commit()
     db.refresh(group)
-
-    provision_group_wallet(db, group, raise_on_failure=False)
-
     return group
 
 
 def search_groups(query: str, db: Session) -> list[Group]:
-    """Case-insensitive substring search over active public groups.
-    Passing an empty string returns all public groups (up to 50).
-    """
-    q = db.query(Group).filter(
-        Group.is_active == True,
-        Group.type      == "public",
+    """Case-insensitive substring search over active public groups."""
+    return (
+        db.query(Group)
+        .filter(
+            Group.is_active == True,  # noqa: E712
+            Group.type      == "public",
+            Group.name.ilike(f"%{query}%"),
+        )
+        .order_by(Group.name)
+        .limit(50)
+        .all()
     )
-    if query.strip():
-        q = q.filter(Group.name.ilike(f"%{query}%"))
-    return q.order_by(Group.name).limit(50).all()
 
 
 def delete_group(actor: User, group_id: str, db: Session) -> None:
@@ -187,7 +186,7 @@ def delete_group(actor: User, group_id: str, db: Session) -> None:
     db.commit()
 
 
-# -- Membership ----------------------------------------------------------------
+# ── Membership ────────────────────────────────────────────────────────────────
 
 def list_my_groups(user: User, db: Session) -> list[dict]:
     rows = (
@@ -283,11 +282,16 @@ def leave_group(actor: User, group_id: str, db: Session) -> None:
     db.commit()
 
 
-# -- Join requests (user → group) ----------------------------------------------
+# ── Join requests (user → group) ──────────────────────────────────────────────
 
 def request_to_join(actor: User, group_id: str, db: Session) -> GroupRequest:
     group = _get_group_or_404(group_id, db)
 
+    if group.owner_id == actor.id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "You cannot request to join a group you created.",
+        )
     if group.type == "private":
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -382,7 +386,7 @@ def list_join_requests(actor: User, group_id: str, db: Session) -> list[dict]:
     ]
 
 
-# -- Invites (admin → user) ----------------------------------------------------
+# ── Invites (admin → user) ────────────────────────────────────────────────────
 
 def invite_user(
     actor:    User,

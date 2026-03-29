@@ -13,9 +13,11 @@ class JoinedGroupDetailScreen extends StatelessWidget {
   const JoinedGroupDetailScreen({
     super.key,
     this.state = JoinedGroupState.active,
+    this.groupName,
   });
 
   final JoinedGroupState state;
+  final String? groupName;
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +40,7 @@ class JoinedGroupDetailScreen extends StatelessWidget {
               onPressed: () => Navigator.of(context).pop(),
             ),
             title: Text(
-              'Ajo Group Detail',
+              'Group Details',
               style: AppTypography.titleMd(cs.primary),
             ),
             actions: [
@@ -53,7 +55,7 @@ class JoinedGroupDetailScreen extends StatelessWidget {
           // -- State-specific body ----------------------------------------
           SliverToBoxAdapter(
             child: switch (state) {
-              JoinedGroupState.active => const _ActiveBody(),
+              JoinedGroupState.active => _ActiveBody(groupName: groupName),
               JoinedGroupState.defaulting => const _DefaultingBody(),
               JoinedGroupState.payout => const _PayoutBody(),
             },
@@ -69,7 +71,9 @@ class JoinedGroupDetailScreen extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════════════
 
 class _ActiveBody extends StatelessWidget {
-  const _ActiveBody();
+  const _ActiveBody({this.groupName});
+
+  final String? groupName;
 
   static const _members = [
     _MemberData(
@@ -124,7 +128,7 @@ class _ActiveBody extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  'Wealth Builders\nAjo',
+                  groupName ?? 'Wealth Builders\nAjo',
                   style: AppTypography.headlineSm(cs.onSurface)
                       .copyWith(fontWeight: FontWeight.w800, height: 1.15),
                 ),

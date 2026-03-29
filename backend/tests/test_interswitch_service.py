@@ -20,6 +20,8 @@ from app.services.interswitch import (  # noqa: E402
     _extract_access_token,
     _extract_boolean_match,
     _extract_virtual_account,
+    InterswitchError,
+    create_virtual_account,
 )
 
 
@@ -80,6 +82,47 @@ class InterswitchServiceTests(unittest.TestCase):
         self.assertEqual(account.provider_reference, "VIRTUAL_ACCOUNTMX2762031774566874219")
         self.assertEqual(account.account_number, "7620601622")
         self.assertEqual(account.bank_code, "WEMA")
+
+    def test_create_virtual_account_can_be_forced_static(self) -> None:
+        from unittest.mock import patch
+
+        with patch("app.services.interswitch.ISW_FORCE_STATIC_VIRTUAL_ACCOUNT", True):
+            account = create_virtual_account(
+                "Dillon Bunch",
+                merchant_code="MX276203",
+                fallback_seed="user:user-1",
+            )
+
+        self.assertEqual(account.account_name, "Dillon Bunch")
+        self.assertTrue(account.provider_wallet_id.startswith("mock-wallet-"))
+        self.assertTrue(account.provider_reference.startswith("mock-reference-"))
+        self.assertEqual(len(account.account_number), 10)
+        self.assertEqual(account.bank_name, "Blaze Demo Bank")
+        self.assertEqual(account.bank_code, "999")
+
+    def test_create_virtual_account_falls_back_when_interswitch_is_unavailable(self) -> None:
+        from unittest.mock import patch
+
+        with patch("app.services.interswitch.ISW_FORCE_STATIC_VIRTUAL_ACCOUNT", False), patch(
+            "app.services.interswitch.ISW_ALLOW_STATIC_VIRTUAL_ACCOUNT_FALLBACK",
+            True,
+        ), patch(
+            "app.services.interswitch._create_virtual_account_via_interswitch",
+            side_effect=InterswitchError("provider unavailable"),
+        ):
+            account = create_virtual_account(
+                "Dillon Bunch",
+                merchant_code="MX276203",
+                fallback_seed="user:user-1",
+            )
+            repeated = create_virtual_account(
+                "Dillon Bunch",
+                merchant_code="MX276203",
+                fallback_seed="user:user-1",
+            )
+
+        self.assertTrue(account.provider_wallet_id.startswith("mock-wallet-"))
+        self.assertEqual(account.account_number, repeated.account_number)
 
 
 if __name__ == "__main__":

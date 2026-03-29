@@ -39,7 +39,7 @@ class UserGroup(Base):
     )
 
     group: Mapped["Group"] = relationship("Group", back_populates="memberships")
-    
+
 
 
 class GroupRequest(Base):

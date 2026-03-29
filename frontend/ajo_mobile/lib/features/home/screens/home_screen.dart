@@ -1,22 +1,18 @@
 import 'dart:ui';
 
-import 'package:ajo_mobile/features/pools/data/mock_pools.dart';
-import 'package:ajo_mobile/features/pools/screens/joined_group_details.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/api/api_repositories.dart';
 import '../../../core/theme/theme.dart';
-import '../../messages/screens/messages_screen.dart';
+import '../../pools/data/groups_http_api.dart';
+import '../../pools/joined_group_entry.dart';
 import '../../pools/screens/create_group_screen.dart';
 import '../../pools/screens/explore_groups_screen.dart';
-import 'account_screen.dart';
-import '../models/mock_user_profile.dart';
-
-import 'dashboard_details_screen.dart';
-import 'deposit_screen.dart';
+import '../models/user_profile.dart';
 import '../../profile/screens/kyc_screen.dart';
+import 'account_screen.dart';
 import 'wallet_screen.dart';
-
-// --- Main Shell ---------------------------------------------------------------
+import '../../messages/screens/messages_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -28,11 +24,16 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   late final PageController _pageController;
+  UserProfile? _profile;
+  List<MyMembership> _myGroups = const [];
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _selectedIndex);
+    _loadProfile();
   }
 
   void _onTabTapped(int index) {
@@ -42,6 +43,34 @@ class _HomeScreenState extends State<HomeScreen> {
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeOut,
     );
+  }
+
+  Future<void> _loadProfile() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+    try {
+      final profile = await profileHttpApi.getMe();
+      List<MyMembership> groups = const [];
+      try {
+        groups = await groupsHttpApi.myGroups();
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() {
+        _profile = profile;
+        _myGroups = groups;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
   }
 
   @override
@@ -77,20 +106,26 @@ class _HomeScreenState extends State<HomeScreen> {
       body: PageView(
         controller: _pageController,
         onPageChanged: (i) => setState(() => _selectedIndex = i),
-        children: const [
+        children: [
           _KeptPage(
             storageKey: PageStorageKey('home_dashboard'),
-            child: _HomeContent(),
+            child: _HomeContent(
+              profile: _profile,
+              myGroups: _myGroups,
+              loading: _loading,
+              error: _error,
+              onRetry: _loadProfile,
+            ),
           ),
           _KeptPage(
             storageKey: PageStorageKey('home_explore'),
             child: ExploreGroupsScreen(),
           ),
-          _KeptPage(
+          const _KeptPage(
             storageKey: PageStorageKey('home_wallet'),
             child: WalletScreen(),
           ),
-          _KeptPage(
+          const _KeptPage(
             storageKey: PageStorageKey('home_accounts'),
             child: AccountScreen(),
           ),
@@ -100,35 +135,26 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// --- Home Content -------------------------------------------------------------
-
 class _HomeContent extends StatefulWidget {
-  const _HomeContent();
+  const _HomeContent({
+    required this.profile,
+    required this.myGroups,
+    required this.loading,
+    required this.error,
+    required this.onRetry,
+  });
+
+  final UserProfile? profile;
+  final List<MyMembership> myGroups;
+  final bool loading;
+  final String? error;
+  final Future<void> Function() onRetry;
 
   @override
   State<_HomeContent> createState() => _HomeContentState();
 }
 
 class _HomeContentState extends State<_HomeContent> {
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _fakeFetch();
-  }
-
-  Future<void> _fakeFetch() async {
-    await Future<void>.delayed(const Duration(milliseconds: 1100));
-    if (!mounted) return;
-    setState(() => _loading = false);
-  }
-
-  Future<void> _onRefresh() async {
-    if (mounted) setState(() => _loading = true);
-    await _fakeFetch();
-  }
-
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -137,44 +163,46 @@ class _HomeContentState extends State<_HomeContent> {
       backgroundColor: cs.surfaceContainer,
       body: RefreshIndicator(
         color: cs.primary,
-        onRefresh: _onRefresh,
+        onRefresh: widget.onRetry,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            _GlassAppBar(),
+            _GlassAppBar(profile: widget.profile),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
-                  _BalanceCard(loading: _loading),
+                  if (widget.error != null) _ErrorCard(message: widget.error!, onRetry: widget.onRetry),
+                  _BalanceCard(profile: widget.profile, loading: widget.loading),
                   const SizedBox(height: 20),
-                  _ProfileCompletionCard(loading: _loading),
+                  _ProfileCompletionCard(profile: widget.profile, loading: widget.loading),
                   const SizedBox(height: 28),
                   _SectionHeader(title: 'Quick Actions'),
                   const SizedBox(height: 12),
                   _QuickActionsGrid(),
                   const SizedBox(height: 28),
-                  _SectionHeader(
-                    title: 'Active Pools',
-                    action: TextButton(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const ExploreGroupsScreen(),
+                  _SectionHeader(title: 'My Groups'),
+                  const SizedBox(height: 12),
+                  if (widget.loading)
+                    const Center(child: CircularProgressIndicator())
+                  else if (widget.myGroups.isEmpty)
+                    _EmptyGroupsCard()
+                  else
+                    ...widget.myGroups.map(
+                      (g) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _MyGroupCard(
+                          group: g,
+                          onOpen: () => openJoinedGroupDetail(
+                            context,
+                            groupId: g.groupId,
+                            groupName: g.name,
+                            role: g.role,
+                            groupType: g.type,
+                          ),
                         ),
                       ),
-                      child: Text('See All',
-                          style: AppTypography.labelMd(cs.primary)),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // -- Mock-data driven pool list ---------------------------
-                  ...mockActivePools.map(
-                    (pool) => Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: _PoolCard(loading: _loading, pool: pool),
-                    ),
-                  ),
                 ]),
               ),
             ),
@@ -185,7 +213,7 @@ class _HomeContentState extends State<_HomeContent> {
   }
 }
 
-// --- Kept Page ----------------------------------------------------------------
+// ─── Kept Page ────────────────────────────────────────────────────────────────
 
 class _KeptPage extends StatefulWidget {
   const _KeptPage({required this.storageKey, required this.child});
@@ -208,9 +236,12 @@ class _KeptPageState extends State<_KeptPage>
   }
 }
 
-// --- Glass App Bar ------------------------------------------------------------
+// ─── Glass App Bar ────────────────────────────────────────────────────────────
 
 class _GlassAppBar extends StatelessWidget {
+  const _GlassAppBar({this.profile});
+  final UserProfile? profile;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -251,7 +282,7 @@ class _GlassAppBar extends StatelessWidget {
                     children: [
                       Text('Welcome back,',
                           style: AppTypography.labelSm(cs.onSurfaceVariant)),
-                      Text(mockUserProfile.fullName,
+                      Text(profile?.fullName.isNotEmpty == true ? profile!.fullName : 'Welcome',
                           style: AppTypography.titleMd(cs.onSurface)),
                     ],
                   ),
@@ -325,7 +356,7 @@ class _GlassAppBar extends StatelessWidget {
   }
 }
 
-// --- Shimmer Box --------------------------------------------------------------
+// ─── Shimmer Box ──────────────────────────────────────────────────────────────
 
 class _ShimmerBox extends StatefulWidget {
   const _ShimmerBox({
@@ -397,10 +428,9 @@ class _ShimmerBoxState extends State<_ShimmerBox>
   }
 }
 
-// --- Balance Card -------------------------------------------------------------
-
 class _BalanceCard extends StatelessWidget {
-  const _BalanceCard({this.loading = false});
+  const _BalanceCard({required this.profile, this.loading = false});
+  final UserProfile? profile;
   final bool loading;
 
   @override
@@ -408,7 +438,7 @@ class _BalanceCard extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final ext = context.ajoTheme;
 
-    final fixed = mockUserProfile.totalPoolBalance.toStringAsFixed(2);
+    final fixed = 0.0.toStringAsFixed(2);
     final parts = fixed.split('.');
     final intPart = parts.first;
     final decPart = parts.length > 1 ? parts.last : '00';
@@ -604,12 +634,7 @@ class _BalanceCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(12),
                         child: InkWell(
                           borderRadius: BorderRadius.circular(12),
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) =>
-                                  const DashboardDetailsScreen(),
-                            ),
-                          ),
+                          onTap: () {},
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 16, vertical: 10),
@@ -617,7 +642,7 @@ class _BalanceCard extends StatelessWidget {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
-                                  'View Details',
+                                  profile?.wallet?.accountNumber ?? 'No wallet yet',
                                   style: AppTypography.labelMd(
                                           const Color(0xFF003919))
                                       .copyWith(
@@ -642,17 +667,16 @@ class _BalanceCard extends StatelessWidget {
   }
 }
 
-// --- Profile Completion Card --------------------------------------------------
-
 class _ProfileCompletionCard extends StatelessWidget {
-  const _ProfileCompletionCard({this.loading = false});
+  const _ProfileCompletionCard({required this.profile, this.loading = false});
+  final UserProfile? profile;
   final bool loading;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final ext = context.ajoTheme;
-    final progress = mockUserProfile.profileCompletion;
+    final progress = profile?.completion ?? 0.0;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -714,7 +738,7 @@ class _ProfileCompletionCard extends StatelessWidget {
                               style: AppTypography.titleMd(cs.onSurface)),
                           const SizedBox(height: 2),
                           Text(
-                            'Unlock all features by finishing your account setup.',
+                            'Verify BVN and provision wallet to unlock all features.',
                             style:
                                 AppTypography.bodySm(cs.onSurfaceVariant),
                           ),
@@ -741,7 +765,7 @@ class _ProfileCompletionCard extends StatelessWidget {
                         style: AppTypography.labelMd(cs.primary)
                             .copyWith(fontWeight: FontWeight.w700)),
                     const Spacer(),
-                    Text('3/4 Steps',
+                    Text('${(progress * 4).round()}/4 Steps',
                         style:
                             AppTypography.labelSm(cs.onSurfaceVariant)),
                   ],
@@ -787,8 +811,6 @@ class _ProfileCompletionCard extends StatelessWidget {
   }
 }
 
-// --- Section Header ------------------------------------------------------------
-
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({required this.title, this.action});
   final String title;
@@ -807,8 +829,6 @@ class _SectionHeader extends StatelessWidget {
     );
   }
 }
-
-// --- Quick Actions Grid --------------------------------------------------------
 
 class _QuickActionsGrid extends StatelessWidget {
   @override
@@ -829,12 +849,12 @@ class _QuickActionsGrid extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: _ActionCard(
-            icon: Icons.payments_outlined,
-            title: 'Contribute',
-            subtitle: 'Add money to your plan',
+            icon: Icons.verified_user_outlined,
+            title: 'Verify KYC',
+            subtitle: 'Complete BVN verification',
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
-                  builder: (_) => const DepositScreen()),
+                  builder: (_) => const KycScreen()),
             ),
           ),
         ),
@@ -894,264 +914,93 @@ class _ActionCard extends StatelessWidget {
   }
 }
 
-// --- Pool Card ----------------------------------------------------------------
+class _ErrorCard extends StatelessWidget {
+  const _ErrorCard({required this.message, required this.onRetry});
 
-class _PoolCard extends StatelessWidget {
-  const _PoolCard({
-    this.loading = false,
-    required this.pool,
-  });
-
-  final bool loading;
-  final PoolData pool;
-
-  static _StateStyle _styleFor(JoinedGroupState state, ColorScheme cs) {
-    return switch (state) {
-      JoinedGroupState.active => _StateStyle(
-          borderColor: cs.primary,
-          badgeColor: cs.primary.withValues(alpha: 0.12),
-          badgeTextColor: cs.primary,
-          badgeIcon: Icons.check_circle_outline_rounded,
-          badgeLabel: 'Active',
-        ),
-      JoinedGroupState.payout => _StateStyle(
-          borderColor: const Color(0xFF27AE60),
-          badgeColor: const Color(0xFF27AE60).withValues(alpha: 0.12),
-          badgeTextColor: const Color(0xFF27AE60),
-          badgeIcon: Icons.celebration_outlined,
-          badgeLabel: 'Payout',
-        ),
-      JoinedGroupState.defaulting => _StateStyle(
-          borderColor: const Color(0xFFD63B2B),
-          badgeColor: const Color(0xFFD63B2B).withValues(alpha: 0.10),
-          badgeTextColor: const Color(0xFFD63B2B),
-          badgeIcon: Icons.warning_amber_rounded,
-          badgeLabel: 'Overdue',
-        ),
-    };
-  }
+  final String message;
+  final Future<void> Function() onRetry;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final ext = context.ajoTheme;
-
-    // -- Shimmer skeleton --------------------------------------------------
-    if (loading) {
-      return Container(
-        decoration: BoxDecoration(
-          color: cs.surfaceContainerLowest,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: AppTheme.ambientShadow(ext.ambientShadowColor),
-        ),
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            const _ShimmerBox(width: 48, height: 48, radius: 16),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  _ShimmerBox(width: 160, height: 14, radius: 8),
-                  SizedBox(height: 10),
-                  _ShimmerBox(width: 210, height: 12, radius: 8),
-                  SizedBox(height: 12),
-                  _ShimmerBox(
-                      width: double.infinity, height: 6, radius: 100),
-                ],
-              ),
-            ),
-            const SizedBox(width: 14),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: const [
-                _ShimmerBox(width: 60, height: 14, radius: 8),
-                SizedBox(height: 6),
-                _ShimmerBox(width: 44, height: 12, radius: 8),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-
-    final style = _styleFor(pool.state, cs);
-
-    return InkWell(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => JoinedGroupDetailScreen(state: pool.state),
-        ),
-      ),
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        decoration: BoxDecoration(
-          color: cs.surfaceContainerLowest,
-          borderRadius: BorderRadius.circular(16),
-          border: Border(
-            left: BorderSide(color: style.borderColor, width: 4),
-          ),
-          boxShadow: AppTheme.ambientShadow(ext.ambientShadowColor),
-        ),
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            // -- Pool icon -------------------------------------------------
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: cs.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(pool.icon,
-                  color: cs.onSurfaceVariant, size: 24),
-            ),
-            const SizedBox(width: 14),
-
-            // -- Title / cycle / progress ----------------------------------
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          pool.title,
-                          style: AppTypography.titleSm(cs.onSurface),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      _StateBadge(
-                        icon: style.badgeIcon,
-                        label: style.badgeLabel,
-                        bgColor: style.badgeColor,
-                        textColor: style.badgeTextColor,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 3),
-                  Text(pool.cycleLabel,
-                      style: AppTypography.bodySm(cs.onSurfaceVariant)),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(100),
-                    child: SizedBox(
-                      height: 6,
-                      child: Stack(children: [
-                        Container(color: cs.surfaceContainerHighest),
-                        FractionallySizedBox(
-                          widthFactor: pool.progress,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: style.borderColor,
-                              borderRadius: BorderRadius.circular(100),
-                            ),
-                          ),
-                        ),
-                      ]),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${(pool.progress * 100).toInt()}%',
-                    style: AppTypography.labelSm(cs.onSurfaceVariant),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 14),
-
-            // -- Amount / date ---------------------------------------------
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(pool.contributionAmount,
-                    style: AppTypography.titleSm(cs.onSurface)),
-                const SizedBox(height: 4),
-                Text(pool.nextDate,
-                    style: AppTypography.titleSm(style.badgeTextColor)
-                        .copyWith(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 2),
-                Text(
-                  pool.nextDateSub,
-                  style: AppTypography.labelSm(cs.onSurfaceVariant)
-                      .copyWith(fontSize: 9, letterSpacing: 0.3),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// --- State Badge --------------------------------------------------------------
-
-class _StateBadge extends StatelessWidget {
-  const _StateBadge({
-    required this.icon,
-    required this.label,
-    required this.bgColor,
-    required this.textColor,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color bgColor;
-  final Color textColor;
-
-  @override
-  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(100),
+        color: cs.errorContainer,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: textColor, size: 11),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: textColor,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.2,
-            ),
-          ),
+          Expanded(child: Text(message, style: AppTypography.bodySm(cs.onErrorContainer))),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
         ],
       ),
     );
   }
 }
 
-// --- State Style --------------------------------------------------------------
-
-class _StateStyle {
-  const _StateStyle({
-    required this.borderColor,
-    required this.badgeColor,
-    required this.badgeTextColor,
-    required this.badgeIcon,
-    required this.badgeLabel,
-  });
-
-  final Color borderColor;
-  final Color badgeColor;
-  final Color badgeTextColor;
-  final IconData badgeIcon;
-  final String badgeLabel;
+class _EmptyGroupsCard extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        'You have not joined any groups yet.',
+        style: AppTypography.bodyMd(cs.onSurfaceVariant),
+      ),
+    );
+  }
 }
 
-// --- Bottom Navigation --------------------------------------------------------
+class _MyGroupCard extends StatelessWidget {
+  const _MyGroupCard({required this.group, required this.onOpen});
+  final MyMembership group;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Material(
+      color: cs.surfaceContainerLowest,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onOpen,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Icon(Icons.groups_rounded, color: cs.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(group.name, style: AppTypography.titleSm(cs.onSurface)),
+                    Text(
+                      '${group.type.toUpperCase()} • ${group.role.toUpperCase()}',
+                      style: AppTypography.labelSm(cs.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Bottom Navigation ────────────────────────────────────────────────────────
 
 class _BottomNav extends StatelessWidget {
   const _BottomNav({

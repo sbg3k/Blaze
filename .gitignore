@@ -7,4 +7,3 @@ venv/
 *.lock
 CLAUDE.md
 AGENTS.md
-output.md

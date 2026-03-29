@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
+import logging
 from typing import Any
 
 import httpx
@@ -15,12 +17,16 @@ from app.config import (
     ISW_BVN_VERIFY_URL,
     ISW_CLIENT_ID,
     ISW_CLIENT_SECRET,
+    ISW_ALLOW_STATIC_VIRTUAL_ACCOUNT_FALLBACK,
     ISW_MERCHANT_CODE,
+    ISW_FORCE_STATIC_VIRTUAL_ACCOUNT,
     ISW_QA_CLIENT_ID,
     ISW_QA_CLIENT_SECRET,
     ISW_TIMEOUT_SECONDS,
     ISW_TOKEN_URL,
     ISW_VIRTUAL_ACCOUNT_URL,
+    STATIC_VIRTUAL_ACCOUNT_BANK_CODE,
+    STATIC_VIRTUAL_ACCOUNT_BANK_NAME,
 )
 
 
@@ -46,6 +52,7 @@ class InterswitchVirtualAccount:
 
 _IDENTITY_TOKEN_CACHE: _CachedToken | None = None
 _WALLET_TOKEN_CACHE: _CachedToken | None = None
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -148,6 +155,47 @@ def _extract_virtual_account(payload: dict[str, Any]) -> InterswitchVirtualAccou
         account_number=_require_text(source.get("accountNumber"), "account number"),
         bank_name=source.get("bankName") if isinstance(source.get("bankName"), str) else None,
         bank_code=source.get("bankCode") if isinstance(source.get("bankCode"), str) else None,
+    )
+
+
+def _build_static_virtual_account(
+    account_name: str,
+    *,
+    merchant_code: str,
+    fallback_seed: str | None = None,
+) -> InterswitchVirtualAccount:
+    normalized_account_name = account_name.strip()
+    seed_source = "|".join(
+        part
+        for part in (fallback_seed, merchant_code.strip(), normalized_account_name.lower())
+        if part
+    )
+    digest = hashlib.sha256(seed_source.encode("utf-8")).hexdigest()
+    suffix = digest[:12]
+    account_number = f"9{int(digest[:15], 16) % 1_000_000_000:09d}"
+
+    return InterswitchVirtualAccount(
+        provider_wallet_id=f"mock-wallet-{suffix}",
+        provider_reference=f"mock-reference-{suffix}",
+        account_name=normalized_account_name,
+        account_number=account_number,
+        bank_name=STATIC_VIRTUAL_ACCOUNT_BANK_NAME,
+        bank_code=STATIC_VIRTUAL_ACCOUNT_BANK_CODE,
+    )
+
+
+def _static_virtual_account_fallback(
+    account_name: str,
+    *,
+    merchant_code: str,
+    fallback_seed: str | None,
+    reason: str,
+) -> InterswitchVirtualAccount:
+    logger.warning("Falling back to static virtual account: %s", reason)
+    return _build_static_virtual_account(
+        account_name,
+        merchant_code=merchant_code,
+        fallback_seed=fallback_seed,
     )
 
 
@@ -294,23 +342,21 @@ def verify_bvn_boolean_match(first_name: str, last_name: str, bvn: str) -> bool:
     raise InterswitchError("BVN verification did not complete successfully.")
 
 
-def create_virtual_account(account_name: str, *, merchant_code: str | None = None) -> InterswitchVirtualAccount:
-    if not account_name.strip():
-        raise ValueError("Account name is required for virtual-account creation.")
+def _create_virtual_account_via_interswitch(
+    account_name: str,
+    *,
+    merchant_code: str,
+) -> InterswitchVirtualAccount:
     if not ISW_VIRTUAL_ACCOUNT_URL:
         raise InterswitchError(
             "Wallet provisioning is not configured. Set ISW_VIRTUAL_ACCOUNT_URL or ISW_QA_URL."
         )
 
-    resolved_merchant_code = (merchant_code or ISW_MERCHANT_CODE).strip()
-    if not resolved_merchant_code:
-        raise InterswitchError("Wallet provisioning is not configured. Set ISW_MERCHANT_CODE.")
-
     with _build_client() as client:
         token = get_wallet_access_token(client=client)
         payload = {
             "accountName": account_name.strip(),
-            "merchantCode": resolved_merchant_code,
+            "merchantCode": merchant_code,
         }
 
         for attempt in range(2):
@@ -341,3 +387,48 @@ def create_virtual_account(account_name: str, *, merchant_code: str | None = Non
                 raise InterswitchError("Could not reach Interswitch virtual-account endpoint.") from exc
 
     raise InterswitchError("Virtual-account creation did not complete successfully.")
+
+
+def create_virtual_account(
+    account_name: str,
+    *,
+    merchant_code: str | None = None,
+    fallback_seed: str | None = None,
+) -> InterswitchVirtualAccount:
+    normalized_account_name = account_name.strip()
+    if not normalized_account_name:
+        raise ValueError("Account name is required for virtual-account creation.")
+
+    resolved_merchant_code = (merchant_code or ISW_MERCHANT_CODE).strip()
+    if not resolved_merchant_code:
+        if ISW_ALLOW_STATIC_VIRTUAL_ACCOUNT_FALLBACK:
+            return _static_virtual_account_fallback(
+                normalized_account_name,
+                merchant_code="mock-merchant",
+                fallback_seed=fallback_seed,
+                reason="ISW_MERCHANT_CODE is not configured.",
+            )
+        raise InterswitchError("Wallet provisioning is not configured. Set ISW_MERCHANT_CODE.")
+
+    if ISW_FORCE_STATIC_VIRTUAL_ACCOUNT:
+        return _static_virtual_account_fallback(
+            normalized_account_name,
+            merchant_code=resolved_merchant_code,
+            fallback_seed=fallback_seed,
+            reason="ISW_FORCE_STATIC_VIRTUAL_ACCOUNT is enabled.",
+        )
+
+    try:
+        return _create_virtual_account_via_interswitch(
+            normalized_account_name,
+            merchant_code=resolved_merchant_code,
+        )
+    except InterswitchError as exc:
+        if not ISW_ALLOW_STATIC_VIRTUAL_ACCOUNT_FALLBACK:
+            raise
+        return _static_virtual_account_fallback(
+            normalized_account_name,
+            merchant_code=resolved_merchant_code,
+            fallback_seed=fallback_seed,
+            reason=str(exc),
+        )

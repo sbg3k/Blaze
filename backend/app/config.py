@@ -20,6 +20,13 @@ def _optional(key: str, default: str = "") -> str:
     return os.getenv(key, default).strip()
 
 
+def _optional_bool(key: str, default: bool = False) -> bool:
+    raw_value = os.getenv(key)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _build_virtual_account_url() -> str:
     explicit = _optional("ISW_VIRTUAL_ACCOUNT_URL")
     if explicit:
@@ -69,6 +76,22 @@ ISW_QA_URL: str = _optional("ISW_QA_URL")
 ISW_QA_CLIENT_ID: str = _optional("ISW_QA_CLIENT_ID")
 ISW_QA_CLIENT_SECRET: str = _optional("ISW_QA_CLIENT_SECRET")
 ISW_VIRTUAL_ACCOUNT_URL: str = _build_virtual_account_url()
+ISW_ALLOW_STATIC_VIRTUAL_ACCOUNT_FALLBACK: bool = _optional_bool(
+    "ISW_ALLOW_STATIC_VIRTUAL_ACCOUNT_FALLBACK",
+    True,
+)
+ISW_FORCE_STATIC_VIRTUAL_ACCOUNT: bool = _optional_bool(
+    "ISW_FORCE_STATIC_VIRTUAL_ACCOUNT",
+    False,
+)
+STATIC_VIRTUAL_ACCOUNT_BANK_NAME: str = _optional(
+    "STATIC_VIRTUAL_ACCOUNT_BANK_NAME",
+    "Blaze Demo Bank",
+)
+STATIC_VIRTUAL_ACCOUNT_BANK_CODE: str = _optional(
+    "STATIC_VIRTUAL_ACCOUNT_BANK_CODE",
+    "999",
+)
 
 # -- Token / OTP lifetimes -----------------------------------------------------
 ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))

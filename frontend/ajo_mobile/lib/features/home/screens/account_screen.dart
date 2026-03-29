@@ -2,8 +2,9 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/api/api_repositories.dart';
 import '../../../core/theme/theme.dart';
-import '../models/mock_user_profile.dart';
+import '../models/user_profile.dart';
 import '../../auth/screens/login_screen.dart';
 import '../../profile/screens/kyc_screen.dart';
 import '../../profile/screens/notifications_screen.dart';
@@ -11,8 +12,36 @@ import '../../profile/screens/personal_info_screen.dart';
 import '../../profile/screens/security_screen.dart';
 import '../../profile/screens/support_screen.dart';
 
-class AccountScreen extends StatelessWidget {
+class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key});
+
+  @override
+  State<AccountScreen> createState() => _AccountScreenState();
+}
+
+class _AccountScreenState extends State<AccountScreen> {
+  UserProfile? _profile;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final me = await profileHttpApi.getMe();
+      if (!mounted) return;
+      setState(() {
+        _profile = me;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,11 +56,11 @@ class AccountScreen extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                _ProfileHeader(),
+                _ProfileHeader(profile: _profile),
                 const SizedBox(height: 20),
-                _ProfileStatusCard(),
+                _ProfileStatusCard(profile: _profile, loading: _loading),
                 const SizedBox(height: 16),
-                _KycCard(),
+                _KycCard(profile: _profile),
                 const SizedBox(height: 28),
                 _SectionLabel(label: 'ACCOUNT SETTINGS'),
                 const SizedBox(height: 12),
@@ -99,7 +128,7 @@ class AccountScreen extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 24),
-                _LogoutButton(),
+                const _LogoutButton(),
                 const SizedBox(height: 28),
                 _VersionLabel(),
               ]),
@@ -111,7 +140,7 @@ class AccountScreen extends StatelessWidget {
   }
 }
 
-// --- App Bar ------------------------------------------------------------------
+// ─── App Bar ──────────────────────────────────────────────────────────────────
 
 class _AccountAppBar extends StatelessWidget {
   @override
@@ -170,9 +199,12 @@ class _AccountAppBar extends StatelessWidget {
   }
 }
 
-// --- Profile Header -----------------------------------------------------------
+// ─── Profile Header ───────────────────────────────────────────────────────────
 
 class _ProfileHeader extends StatelessWidget {
+  const _ProfileHeader({required this.profile});
+  final UserProfile? profile;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -246,12 +278,12 @@ class _ProfileHeader extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         Text(
-          mockUserProfile.fullName,
+          profile?.fullName.isNotEmpty == true ? profile!.fullName : 'Profile',
           style: AppTypography.titleLg(cs.onSurface),
         ),
         const SizedBox(height: 4),
         Text(
-          mockUserProfile.handle,
+          profile?.handle ?? '',
           style: AppTypography.labelSm(cs.onSurfaceVariant),
         ),
       ],
@@ -259,15 +291,19 @@ class _ProfileHeader extends StatelessWidget {
   }
 }
 
-// --- Profile Status Card ------------------------------------------------------
+// ─── Profile Status Card ──────────────────────────────────────────────────────
 
 class _ProfileStatusCard extends StatelessWidget {
+  const _ProfileStatusCard({required this.profile, required this.loading});
+  final UserProfile? profile;
+  final bool loading;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final ext = context.ajoTheme;
 
-    final progress = mockUserProfile.profileCompletion;
+    final progress = loading ? 0.0 : (profile?.completion ?? 0.0);
 
     return Container(
       decoration: BoxDecoration(
@@ -347,9 +383,12 @@ class _ProfileStatusCard extends StatelessWidget {
   }
 }
 
-// --- KYC Card -----------------------------------------------------------------
+// ─── KYC Card ─────────────────────────────────────────────────────────────────
 
 class _KycCard extends StatelessWidget {
+  const _KycCard({required this.profile});
+  final UserProfile? profile;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -394,13 +433,13 @@ class _KycCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              mockUserProfile.kycInProgress ? 'KYC Verification' : 'Complete KYC',
+              (profile?.kyc.nextStep ?? 'verify_bvn') == 'completed' ? 'KYC Completed' : 'Complete KYC',
               style: AppTypography.titleMd(cs.primary),
             ),
             const SizedBox(height: 6),
             Text(
-              mockUserProfile.kycInProgress
-                  ? 'Your verification is currently in progress (mock).'
+              (profile?.kyc.nextStep ?? 'verify_bvn') == 'completed'
+                  ? 'Your identity is verified and wallet is provisioned.'
                   : 'Increase your monthly savings limit by verifying your identity.',
               style: AppTypography.bodySm(cs.onSurfaceVariant),
               textAlign: TextAlign.center,
@@ -412,7 +451,7 @@ class _KycCard extends StatelessWidget {
   }
 }
 
-// --- Section Label ------------------------------------------------------------
+// ─── Section Label ────────────────────────────────────────────────────────────
 
 class _SectionLabel extends StatelessWidget {
   const _SectionLabel({required this.label});
@@ -428,7 +467,7 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-// --- Settings Group -----------------------------------------------------------
+// ─── Settings Group ───────────────────────────────────────────────────────────
 
 class _SettingsItemData {
   const _SettingsItemData({
@@ -554,9 +593,11 @@ class _SettingsRow extends StatelessWidget {
   }
 }
 
-// --- Logout Button ------------------------------------------------------------
+// ─── Logout Button ────────────────────────────────────────────────────────────
 
 class _LogoutButton extends StatelessWidget {
+  const _LogoutButton();
+
   @override
   Widget build(BuildContext context) {
     return InkWell(
@@ -580,6 +621,10 @@ class _LogoutButton extends StatelessWidget {
         );
 
         if (confirmed == true && context.mounted) {
+          try {
+            await authHttpApi.logout();
+          } catch (_) {}
+          if (!context.mounted) return;
           Navigator.of(context).pushReplacement(
             MaterialPageRoute<void>(
               builder: (_) => const LoginScreen(),
@@ -609,7 +654,7 @@ class _LogoutButton extends StatelessWidget {
   }
 }
 
-// --- Version Label ------------------------------------------------------------
+// ─── Version Label ────────────────────────────────────────────────────────────
 
 class _VersionLabel extends StatelessWidget {
   @override

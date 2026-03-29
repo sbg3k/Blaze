@@ -15,7 +15,8 @@ OnboardingNextStep = Literal[
 
 class WalletResponse(BaseModel):
     id: str
-    user_id: str
+    user_id: str | None
+    group_id: str | None
     provider: str
     provider_wallet_id: str | None
     provider_reference: str | None
